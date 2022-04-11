@@ -1,0 +1,133 @@
+Name        KeyboardReader;
+PartNo      ;
+Date        04/11/20;
+Revision    ;
+Designer    GG;
+Company     ;
+Assembly    ;
+Location    ;
+Device      V750C;
+
+/* Input Pins */
+
+PIN 1 = Clk;                /* The clock for the counter and for the ASMs. */
+PIN [2..5] = [PEncIn0..3];  /* Priority encoder. */
+PIN 6 = ACK;
+
+/* Output Pins */
+
+PIN [23..21] = ![DecOut0..2];   /* Decoder. */
+PIN [20..17] = [Q0..3];         /* Flip-flops for the output register. */
+PIN 16 = Dval;
+
+/* Pin Nodes */
+
+PINNODE [25..26] = [CQ0..1];    /* Flip-flops for the counter. */
+PINNODE [27..28] = [PEQ0..1];   /* Flip-flops for the priority encoder's register. */
+PINNODE [29..30] = [KCQ0..1];   /* Flip-flops for the Key Control ASM. */
+PINNODE [31..32] = [KBQ0..1];   /* Flip-flops for the Key Buffer Control ASM. */
+
+/* Up Counter (2-Bit, Synchronous, Counts From 0 To 2) */
+
+[CQ0..1].SP = 'b'0; /* Not used. */
+[CQ0..1].AR = 'b'0; /* Not used. */
+[CQ0..1].CKMUX = Clk;
+
+Two = CQ1 & !CQ0 & Kscan0;
+
+CQ0.D = (CQ0 $ Kscan0) & !Two;
+CQ1.D = (CQ1 $ Kscan0 & CQ0) & !Two;
+
+/* Decoder (2 x 3, Active-Low Outputs) */
+
+DecIn0 = CQ0;
+DecIn1 = CQ1;
+
+DecOut0 = !DecIn1 & !DecIn0;
+DecOut1 = !DecIn1 & DecIn0;
+DecOut2 = DecIn1 & !DecIn0;
+
+/* Priority Encoder (4 x 2, Active-Low Inputs) */
+
+PEncOut0 = !PEncIn1 & PEncIn2 # !PEncIn3;
+PEncOut1 = !PEncIn2 # !PEncIn3;
+PEncGS = !PEncIn0 # !PEncIn1 # !PEncIn2 # !PEncIn3; /* Group select - active if at least one input is active. */
+
+Kpress = PEncGS;
+
+/* Priority Encoder's Register (2-Bit) */
+
+[PEQ0..1].SP = 'b'0; /* Not used. */
+[PEQ0..1].AR = 'b'0; /* Not used. */
+[PEQ0..1].CK = Kscan1;
+
+[PEQ0..1].D = [PEncOut0..1];
+
+/* Output Register (4-Bit) */
+
+[Q0..3].SP = 'b'0; /* Not used. */
+[Q0..3].AR = 'b'0; /* Not used. */
+[Q0..3].CK = Wreg;
+
+[Q0..1].D = [PEQ0..1];
+[Q2..3].D = [CQ0..1];
+
+/* Key Control ASM */
+
+[KCQ0..1].SP = 'b'0; /* Not used. */
+[KCQ0..1].AR = 'b'0; /* Not used. */
+[KCQ0..1].CK = !Clk; /* In phase opposition with Clk. */
+
+Kack = DAC;
+/* Gray encoding. */
+$DEFINE KEY_SCAN_COUNTER                'b'00
+$DEFINE KEY_SCAN_REGISTER               'b'01
+$DEFINE KEY_VALID                       'b'11
+$DEFINE WAIT_NOT_KPRESS_AND_NOT_KACK    'b'10
+
+SEQUENCE [KCQ1..0] {
+    PRESENT KEY_SCAN_COUNTER
+        OUT Kscan0;
+        IF Kpress NEXT KEY_SCAN_REGISTER;
+        DEFAULT NEXT KEY_SCAN_COUNTER;
+    PRESENT KEY_SCAN_REGISTER
+        OUT Kscan1;
+        NEXT KEY_VALID;
+    PRESENT KEY_VALID
+        OUT Kval;
+        IF Kack NEXT WAIT_NOT_KPRESS_AND_NOT_KACK;
+        DEFAULT NEXT KEY_VALID;
+    PRESENT WAIT_NOT_KPRESS_AND_NOT_KACK
+        IF !Kpress & !Kack NEXT KEY_SCAN_COUNTER;
+        DEFAULT NEXT WAIT_NOT_KPRESS_AND_NOT_KACK;
+}
+
+/* Key Buffer Control ASM */
+
+[KBQ0..1].SP = 'b'0; /* Not used. */
+[KBQ0..1].AR = 'b'0; /* Not used. */
+[KBQ0..1].CKMUX = Clk;
+
+DAV = Kval;
+/* Gray encoding. */
+$DEFINE WAIT_DAV_AND_NOT_ACK    'b'00
+$DEFINE WRITE_REGISTER          'b'01
+$DEFINE DATA_ACCEPTED           'b'11
+$DEFINE DATA_VALID              'b'10
+
+SEQUENCE [KBQ1..0] {
+    PRESENT WAIT_DAV_AND_NOT_ACK
+        IF DAV & !ACK NEXT WRITE_REGISTER;
+        DEFAULT NEXT WAIT_DAV_AND_NOT_ACK;
+    PRESENT WRITE_REGISTER
+        OUT Wreg;
+        NEXT DATA_ACCEPTED;
+    PRESENT DATA_ACCEPTED
+        OUT DAC;
+        IF !DAV NEXT DATA_VALID;
+        DEFAULT NEXT DATA_ACCEPTED;
+    PRESENT DATA_VALID
+        OUT Dval;
+        IF ACK NEXT WAIT_DAV_AND_NOT_ACK;
+        DEFAULT NEXT DATA_VALID;
+}

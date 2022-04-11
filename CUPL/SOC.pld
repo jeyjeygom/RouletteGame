@@ -1,0 +1,137 @@
+Name        SOC;
+PartNo      ;
+Date        13/01/21;
+Revision    ;
+Designer    GG;
+Company     ;
+Assembly    ;
+Location    ;
+Device      V750C;
+
+/* Input Pins */
+
+PIN 1 = SCLK;
+PIN 2 = SS;
+PIN 3 = SDX;
+PIN 4 = MCLK;
+
+/* Output Pins */
+
+PIN 23 = WrL;
+/*PIN [22..18] = [Dout0..4];*/
+PIN [22..17] = [D5..0];
+PIN 16 = WrD;
+PIN 15 = Seven;
+PIN 14 = debug;
+
+/* Pin Nodes */
+
+PINNODE [34..32] = [CQ0..2]; /* Flip-flops for the counter. */
+/*PINNODE 31 = D5; /* Flip-flop for the shift register. */
+PINNODE 30 = err; /* Flip-flop for the parity checker. */
+PINNODE [29..28] = [SCQ0..1]; /* Flip-flops for the Serial Control ASM. */
+PINNODE [27..26] = [DQ0..1]; /* Flip-flops for the Dispatcher ASM. */
+
+/* Up Counter (3-Bit, Synchronous, Counts From 0 To 7) */
+
+clr = init;
+
+[CQ0..2].SP = 'b'0; /* Not used. */
+[CQ0..2].AR = clr;
+[CQ0..2].CKMUX = SCLK;
+
+Six = CQ2 & CQ1 & !CQ0;
+Seven = CQ2 & CQ1 & CQ0;
+
+CQ0.D = !CQ0;
+CQ1.D = CQ1 $ CQ0;
+CQ2.D = CQ2 $ CQ1 & CQ0;
+
+/* Shift Register (6-Bit) */
+
+/*[D0..4] = [Dout4..0];*/
+data = SDX;
+enableShift = wr;
+
+[D0..5].SP = 'b'0; /* Not used. */
+[D0..5].AR = 'b'0; /* Not used. */
+[D0..5].CKMUX = SCLK;
+
+[D0..5].D = [data,D0..4] & enableShift # [D0..5] & !enableShift;
+
+/* Parity Check */
+
+err.SP = 'b'0; /* Not used. */
+err.AR = init;
+err.CKMUX = SCLK;
+
+err.D = err $ data;
+
+/* Serial Control ASM */
+
+[SCQ0..1].SP = 'b'0; /* Not used. */
+[SCQ0..1].AR = 'b'0; /* Not used. */
+[SCQ0..1].CK = MCLK;
+
+enRX = SS;
+accept = done;
+pFlag = Seven;
+dFlag = Six;
+RXerror = err;
+/* Gray encoding. */
+$DEFINE INIT                                    'b'00
+$DEFINE WRITE                                   'b'01
+$DEFINE WAIT_ENRX_AND_PFLAG_AND_NOT_RXERROR     'b'11
+$DEFINE DATA_VALID                              'b'10
+
+SEQUENCE [SCQ1..0] {
+    PRESENT INIT
+        OUT init;
+        IF !accept & enRX NEXT WRITE;
+        DEFAULT NEXT INIT;
+    PRESENT WRITE
+        OUT wr;
+        IF !enRX NEXT INIT;
+        IF enRX & dFlag NEXT WAIT_ENRX_AND_PFLAG_AND_NOT_RXERROR;
+        DEFAULT NEXT WRITE;
+    PRESENT WAIT_ENRX_AND_PFLAG_AND_NOT_RXERROR
+        IF !enRX NEXT INIT;
+	IF enRX & !pFlag NEXT WAIT_ENRX_AND_PFLAG_AND_NOT_RXERROR;
+	IF enRX & pFlag & RXerror NEXT INIT;
+        IF enRX & pFlag & !RXerror NEXT DATA_VALID;
+    PRESENT DATA_VALID
+        OUT DXval;
+        IF accept NEXT INIT;
+        DEFAULT NEXT DATA_VALID;
+}
+
+/* Dispatcher ASM */
+
+[DQ0..1].SP = 'b'0; /* Not used. */
+[DQ0..1].AR = 'b'0; /* Not used. */
+[DQ0..1].CK = MCLK;
+
+Dval = DXval;
+LnD = D5;
+/* Gray encoding. */
+$DEFINE WAIT_DVAL               'b'00
+$DEFINE WRITE_LCD               'b'01
+$DEFINE WRITE_ROULETTE_DISPLAY  'b'10
+$DEFINE DONE                    'b'11
+
+SEQUENCE [DQ1..0] {
+    PRESENT WAIT_DVAL
+        IF Dval & LnD NEXT WRITE_LCD;
+        IF Dval & !LnD NEXT WRITE_ROULETTE_DISPLAY;
+        DEFAULT NEXT WAIT_DVAL;
+    PRESENT WRITE_LCD
+        OUT WrL;
+        NEXT DONE;
+    PRESENT WRITE_ROULETTE_DISPLAY
+        OUT WrD;
+        NEXT DONE;
+    PRESENT DONE
+        OUT done;
+        IF !Dval NEXT WAIT_DVAL;
+        DEFAULT NEXT DONE;
+}
